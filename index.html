@@ -30,6 +30,8 @@ button.tertiary:hover:not(:disabled) { background:#F57C00; box-shadow:0 6px 15px
 #closePreview { margin-top:10px; background:#f44336; }
 .offline-badge { background:#ff9800; color:white; padding:4px 8px; border-radius:4px; font-size:12px; margin-left:10px; }
 .dropdown-info { font-size:12px; color:#666; margin-top:-10px; margin-bottom:15px; }
+.install-btn { background:#9C27B0 !important; box-shadow:0 4px 10px rgba(156,39,176,0.3) !important; }
+.install-btn:hover:not(:disabled) { background:#7B1FA2 !important; box-shadow:0 6px 15px rgba(156,39,176,0.4) !important; }
 @media (max-width:650px) { .container { margin:10px; padding:15px; } .input-group { flex-direction:column; gap:0; } .input-group > * { margin-bottom:15px; } #previewContent { width:95%; padding:10px; } }
 </style>
 </head>
@@ -75,6 +77,7 @@ Total: <span id="totalDisplay">0.00</span> FRW
 <button id="submitBtn" onclick="submitPurchase()">Submit Purchase</button>
 <button id="previewBtn" class="secondary" onclick="openPreview()">📋 Preview Offline Purchases</button>
 <button id="syncBtn" class="tertiary" onclick="syncPending()">🔄 Sync Now & Update Names</button>
+<button id="installBtn" class="install-btn" onclick="installPWA()" style="display:none;">📱 Install App</button>
 <button id="historyBtn" class="secondary" onclick="openPurchaseHistory()">📊 Open Purchase History Site</button>
 
 <p id="status"></p>
@@ -125,6 +128,7 @@ const onlineStatusEl = document.getElementById("onlineStatus");
 const pendingCountEl = document.getElementById("pendingCount");
 const buyerInfoEl = document.getElementById("buyerInfo");
 const sellerInfoEl = document.getElementById("sellerInfo");
+const installBtn = document.getElementById("installBtn");
 
 // Database
 let db;
@@ -132,22 +136,25 @@ const DB_NAME = "CreditsBookDB";
 const STORE_PURCHASE = "offlinePurchases";
 const STORE_NAMES = "dropdownNames";
 
+// PWA Installation
+let deferredPrompt;
+
 // Netlify PWA Service Worker Registration
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('/sw.js')
       .then(function(registration) {
-        console.log('SW Registered successfully on Netlify with scope: ', registration.scope);
+        console.log('✅ SW Registered successfully on Netlify with scope: ', registration.scope);
         
         if (navigator.serviceWorker.controller) {
-          console.log('Service Worker is controlling the page');
+          console.log('✅ Service Worker is controlling the page');
           showStatus('✅ App is ready for offline use', 'green');
         } else {
-          console.log('Service Worker registered but not controlling yet');
+          console.log('⚠️ Service Worker registered but not controlling yet');
         }
       })
       .catch(function(error) {
-        console.log('SW Registration failed on Netlify: ', error);
+        console.log('❌ SW Registration failed on Netlify: ', error);
         showStatus('⚠️ Offline features not available', 'red');
       });
   });
@@ -157,7 +164,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!refreshing) {
       refreshing = true;
-      console.log('Controller changed - reloading page');
+      console.log('🔄 Controller changed - reloading page');
       showStatus('🔄 App updated - reloading...', 'green');
       setTimeout(() => {
         window.location.reload();
@@ -166,27 +173,53 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// PWA Installation Prompt
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  installBtn.style.display = 'block';
+  console.log('📱 PWA install prompt available');
+});
+
+function installPWA() {
+  if (deferredPrompt) {
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then((choiceResult) => {
+      if (choiceResult.outcome === 'accepted') {
+        console.log('✅ User accepted PWA installation');
+        showStatus('✅ App installed successfully!', 'green');
+        installBtn.style.display = 'none';
+      } else {
+        console.log('❌ User dismissed PWA installation');
+      }
+      deferredPrompt = null;
+    });
+  }
+}
+
 // Initialize Database
 function initDB() {
     const req = indexedDB.open(DB_NAME, 3);
     
     req.onupgradeneeded = e => {
         db = e.target.result;
-        console.log("Upgrading DB to version:", e.oldVersion, "→", e.newVersion);
+        console.log("🔄 Upgrading DB to version:", e.oldVersion, "→", e.newVersion);
         
         if (!db.objectStoreNames.contains(STORE_PURCHASE)) {
             const purchaseStore = db.createObjectStore(STORE_PURCHASE, { autoIncrement: true });
             purchaseStore.createIndex("timestamp", "timestamp", { unique: false });
+            console.log("✅ Created purchases store");
         }
         
         if (!db.objectStoreNames.contains(STORE_NAMES)) {
             db.createObjectStore(STORE_NAMES, { keyPath: "type" });
+            console.log("✅ Created names store");
         }
     };
     
     req.onsuccess = e => { 
         db = e.target.result; 
-        console.log("DB initialized successfully");
+        console.log("✅ DB initialized successfully");
         loadDropdowns();
         updateOnlineStatus();
         updatePendingCount();
@@ -194,7 +227,7 @@ function initDB() {
     };
     
     req.onerror = e => { 
-        console.error("DB Error", e);
+        console.error("❌ DB Error", e);
         showStatus("Error initializing database", "red");
     };
 }
@@ -255,17 +288,17 @@ unitDropdown.addEventListener("change", () => {
 
 // Dropdown Management
 async function fetchNames(type) {
-    console.log(`Fetching ${type} names, online:`, navigator.onLine);
+    console.log(`🔍 Fetching ${type} names, online:`, navigator.onLine);
     
     const localNames = await getLocalNames(type);
     
     if (!navigator.onLine) {
-        console.log(`Offline - using local ${type} names:`, localNames);
+        console.log(`📴 Offline - using local ${type} names:`, localNames);
         return localNames;
     }
     
     try {
-        console.log(`Fetching ${type} names from server...`);
+        console.log(`🌐 Fetching ${type} names from server...`);
         const res = await fetch(DEPLOY_URL, {
             method: "POST",
             body: new URLSearchParams({ action: "getNames", type: type })
@@ -274,18 +307,18 @@ async function fetchNames(type) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         
         const result = await res.json();
-        console.log(`Server response for ${type}:`, result);
+        console.log(`📨 Server response for ${type}:`, result);
         
         if (result.status === "success") {
             const serverNames = result.data.map(r => r[2]).filter(name => name && name.trim() !== '');
-            console.log(`Saving ${serverNames.length} ${type} names locally`);
+            console.log(`💾 Saving ${serverNames.length} ${type} names locally`);
             await saveLocalNames(type, serverNames);
             return serverNames;
         } else {
             throw new Error(result.message || "Fetch failed");
         }
     } catch (error) {
-        console.warn(`Error fetching ${type} names:`, error, "Using local names:", localNames);
+        console.warn(`⚠️ Error fetching ${type} names:`, error, "Using local names:", localNames);
         return localNames;
     }
 }
@@ -301,7 +334,7 @@ function saveLocalNames(type, names) {
         const tx = db.transaction(STORE_NAMES, "readwrite");
         const store = tx.objectStore(STORE_NAMES);
         
-        console.log(`Saving ${names.length} ${type} names to local DB:`, names);
+        console.log(`💾 Saving ${names.length} ${type} names to local DB:`, names);
         
         store.put({ 
             type: type, 
@@ -311,12 +344,12 @@ function saveLocalNames(type, names) {
         });
         
         tx.oncomplete = () => {
-            console.log(`Successfully saved ${names.length} ${type} names`);
+            console.log(`✅ Successfully saved ${names.length} ${type} names`);
             resolve();
         };
         
         tx.onerror = (e) => {
-            console.error(`Error saving ${type} names:`, e);
+            console.error(`❌ Error saving ${type} names:`, e);
             reject(e);
         };
     });
@@ -336,16 +369,16 @@ function getLocalNames(type) {
         
         req.onsuccess = () => {
             if (req.result && req.result.names) {
-                console.log(`Found ${req.result.names.length} local ${type} names:`, req.result.names);
+                console.log(`📁 Found ${req.result.names.length} local ${type} names:`, req.result.names);
                 resolve(req.result.names);
             } else {
-                console.log(`No local ${type} names found`);
+                console.log(`📭 No local ${type} names found`);
                 resolve([]);
             }
         };
         
         req.onerror = () => {
-            console.warn(`Error reading local ${type} names`);
+            console.warn(`⚠️ Error reading local ${type} names`);
             resolve([]);
         };
     });
@@ -394,9 +427,9 @@ async function populateDropdown(dropdown, type, infoEl) {
             infoEl.style.color = '#4CAF50';
         }
         
-        console.log(`Populated ${type} dropdown with ${names.length} items`);
+        console.log(`✅ Populated ${type} dropdown with ${names.length} items`);
     } catch (error) {
-        console.error(`Error populating ${type} dropdown:`, error);
+        console.error(`❌ Error populating ${type} dropdown:`, error);
         if (infoEl) {
             infoEl.textContent = `Error loading ${type.toLowerCase()}s`;
             infoEl.style.color = '#f44336';
@@ -405,7 +438,7 @@ async function populateDropdown(dropdown, type, infoEl) {
 }
 
 async function loadDropdowns() {
-    console.log("Loading dropdowns...");
+    console.log("🔄 Loading dropdowns...");
     await populateDropdown(boughtByDropdown, "Buyer", buyerInfoEl);
     await populateDropdown(sellerNameDropdown, "Seller", sellerInfoEl);
 }
@@ -430,7 +463,7 @@ async function refreshNames() {
         
         showStatus(`✅ Updated ${buyers.length} buyers, ${sellers.length} sellers`, "green");
     } catch (error) {
-        console.error("Error refreshing names:", error);
+        console.error("❌ Error refreshing names:", error);
         showStatus("❌ Failed to refresh names", "red");
     }
 }
@@ -488,7 +521,7 @@ function submitOnline(purchase) {
         }
     })
     .catch((error) => {
-        console.error("Online submission failed, saving offline:", error);
+        console.error("❌ Online submission failed, saving offline:", error);
         saveOffline(purchase);
     });
 }
@@ -611,7 +644,7 @@ async function syncPending() {
                         throw new Error(result.message || "Sync failed");
                     }
                 } catch (err) {
-                    console.error("Sync error:", err);
+                    console.error("❌ Sync error:", err);
                     failCount++;
                 }
             }
@@ -629,7 +662,7 @@ async function syncPending() {
             }
         };
     } catch (error) {
-        console.error("Sync process error:", error);
+        console.error("❌ Sync process error:", error);
         showStatus("❌ Sync failed", "red");
     }
 }
@@ -643,8 +676,9 @@ function openPurchaseHistory() {
 window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
 window.onload = () => { 
-    console.log('Netlify App Starting...');
-    console.log('Service Worker supported:', 'serviceWorker' in navigator);
+    console.log('🚀 Netlify App Starting...');
+    console.log('📱 Service Worker supported:', 'serviceWorker' in navigator);
+    console.log('🌐 Current URL:', window.location.href);
     initDB(); 
 };
 
