@@ -1,33 +1,34 @@
-const CACHE_NAME = 'creditsbook-netlify-v2';
+const CACHE_NAME = 'creditsbook-netlify-v4';
 const urlsToCache = [
   '/',
   '/index.html',
-  '/manifest.json'
+  '/manifest.json',
+  '/icon-192.png',
+  '/icon-512.png'
 ];
 
-// Install event - cache essential files
+// Install event - cache all files including icons
 self.addEventListener('install', event => {
   console.log('🛠 Service Worker installing on Netlify...');
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
-        console.log('📦 Opened cache and adding files:', urlsToCache);
-        return cache.addAll(urlsToCache)
-          .then(() => {
-            console.log('✅ All files cached successfully');
-          })
-          .catch(error => {
-            console.log('❌ Cache addAll failed:', error);
-          });
+        console.log('📦 Opened cache and adding files including PNG icons');
+        return cache.addAll(urlsToCache);
+      })
+      .then(() => {
+        console.log('✅ All resources cached successfully including icons');
+      })
+      .catch(error => {
+        console.log('❌ Cache failed:', error);
       })
   );
-  // Force the waiting service worker to become active
   self.skipWaiting();
 });
 
-// Activate event - clean up old caches
+// Activate event
 self.addEventListener('activate', event => {
-  console.log('🎯 Service Worker activating...');
+  console.log('🎯 Service Worker activating and taking control...');
   event.waitUntil(
     caches.keys().then(cacheNames => {
       return Promise.all(
@@ -40,67 +41,42 @@ self.addEventListener('activate', event => {
       );
     })
   );
-  // Take control immediately
   self.clients.claim();
 });
 
-// Fetch event - serve from cache first, then network
+// Fetch event - serve from cache first
 self.addEventListener('fetch', event => {
-  // Skip non-GET requests
-  if (event.request.method !== 'GET') {
-    return;
-  }
-
-  // Skip Chrome extensions
-  if (event.request.url.startsWith('chrome-extension://')) {
-    return;
-  }
-
-  // Skip external URLs (Google Apps Script, etc.)
-  if (!event.request.url.startsWith(self.location.origin)) {
-    return;
-  }
-
+  if (event.request.method !== 'GET') return;
+  
   event.respondWith(
     caches.match(event.request)
-      .then(response => {
-        // Return cached version if found
-        if (response) {
-          console.log('📂 Serving from cache:', event.request.url);
-          return response;
+      .then(cachedResponse => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
-
-        // Otherwise fetch from network
-        console.log('🌐 Fetching from network:', event.request.url);
+        
         return fetch(event.request)
           .then(response => {
-            // Check if we received a valid response
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
+            if (response.status === 200 && response.type === 'basic') {
+              const responseToCache = response.clone();
+              caches.open(CACHE_NAME)
+                .then(cache => {
+                  cache.put(event.request, responseToCache);
+                });
             }
-
-            // Clone the response
-            const responseToCache = response.clone();
-
-            // Add to cache for future visits
-            caches.open(CACHE_NAME)
-              .then(cache => {
-                cache.put(event.request, responseToCache);
-                console.log('💾 Cached new resource:', event.request.url);
-              });
-
             return response;
           })
           .catch(error => {
-            console.log('❌ Fetch failed:', error);
-            // You could return a custom offline page here
+            console.log('Fetch failed:', error);
+            if (event.request.destination === 'document') {
+              return caches.match('/');
+            }
             throw error;
           });
       })
   );
 });
 
-// Handle messages from the client
 self.addEventListener('message', event => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
