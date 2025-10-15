@@ -1,624 +1,108 @@
- <!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CreditsBook - Offline Ready PWA</title>
-<link rel="manifest" href="manifest.json">
-<style>
-body { font-family: 'Inter', Arial, sans-serif; margin:0; padding:0; background:#f0f2f5; }
-.container { max-width:600px; margin:40px auto; padding:25px; border-radius:16px; box-shadow:0 6px 20px rgba(0,0,0,0.1); background:white; border:1px solid #e0e0e0; }
-h2 { color:#4CAF50; text-align:center; margin-bottom:25px; border-bottom:2px solid #e0e0e0; padding-bottom:10px; }
-input[type="text"], input[type="number"], select, .input-group input, .input-group select { width:100%; padding:12px 15px; margin-bottom:15px; border-radius:8px; border:1px solid #ccc; box-sizing:border-box; transition:border-color 0.3s, box-shadow 0.3s; }
-input:focus, select:focus { border-color:#4CAF50; box-shadow:0 0 0 3px rgba(76,175,80,0.2); outline:none; }
-.input-group { display:flex; gap:10px; margin-bottom:15px; }
-.input-group > * { flex:1; }
-button { width:100%; padding:15px; background:#4CAF50; color:white; border:none; border-radius:8px; font-size:18px; font-weight:bold; cursor:pointer; transition:transform 0.2s, background-color 0.2s, opacity 0.2s; box-shadow:0 4px 10px rgba(76,175,80,0.3); margin-bottom:10px; }
-button:hover:not(:disabled) { background:#45a049; transform:translateY(-2px); box-shadow:0 6px 15px rgba(76,175,80,0.4); }
-button:disabled { background:#a5d6a7; cursor:not-allowed; opacity:0.8; transform:none; box-shadow:none; }
-button.secondary { background:#2196F3; box-shadow:0 4px 10px rgba(33,150,243,0.3); }
-button.secondary:hover:not(:disabled) { background:#1976D2; box-shadow:0 6px 15px rgba(33,150,243,0.4); }
-button.tertiary { background:#FF9800; box-shadow:0 4px 10px rgba(255,152,0,0.3); }
-button.tertiary:hover:not(:disabled) { background:#F57C00; box-shadow:0 6px 15px rgba(255,152,0,0.4); }
-#totalDisplay { font-weight:bold; color:#00796B; font-size:20px; }
-#status { margin-top:15px; padding:10px; border-radius:8px; text-align:center; opacity:0; transition: opacity 0.5s; }
-#previewModal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:1000; }
-#previewContent { background:white; padding:20px; border-radius:12px; max-height:80%; overflow-y:auto; width:90%; max-width:800px; }
-#previewContent table { width:100%; border-collapse:collapse; margin-bottom:15px; }
-#previewContent th, #previewContent td { border:1px solid #ccc; padding:8px; text-align:left; }
-#previewContent th { background:#f0f0f0; position:sticky; top:0; }
-#closePreview { margin-top:10px; background:#f44336; }
-.offline-badge { background:#ff9800; color:white; padding:4px 8px; border-radius:4px; font-size:12px; margin-left:10px; }
-.dropdown-info { font-size:12px; color:#666; margin-top:-10px; margin-bottom:15px; }
-@media (max-width:650px) { .container { margin:10px; padding:15px; } .input-group { flex-direction:column; gap:0; } .input-group > * { margin-bottom:15px; } #previewContent { width:95%; padding:10px; } }
-</style>
-</head>
-<body>
+const CACHE_NAME = 'creditsbook-netlify-v2';
+const urlsToCache = [
+  '/',
+  '/index.html',
+  '/manifest.json'
+];
 
-<div class="container">
-<h2>🛒 Ibifashwe ku Ideni <span id="onlineStatus" class="offline-badge">Offline</span></h2>
-
-<input type="text" id="groceryName" placeholder="Izina ry'igicuruzwa" required>
-
-<div class="input-group">
-<input type="number" id="quantity" placeholder="Quantity" min="0" required>
-<select id="unit" required>
-<option value="" disabled selected>Select Unit</option>
-<option value="kg">kg</option>
-<option value="g">g</option>
-<option value="meters">meters</option>
-<option value="liters">liters</option>
-<option value="pieces">pieces</option>
-<option value="other">Other</option>
-</select>
-<input type="text" id="unitOther" placeholder="Specify unit" style="display:none;">
-</div>
-
-<input type="number" id="price" placeholder="Price per Unit (FRW)" min="0" required>
-
-<p style="font-weight:bold; font-size:18px; text-align: right;">
-Total: <span id="totalDisplay">0.00</span> FRW
-</p>
-
-<select id="boughtBy" required disabled>
-    <option>Loading Buyers...</option>
-</select>
-<p class="dropdown-info" id="buyerInfo">Buyers list will be available offline after first sync</p>
-
-<select id="sellerName" required disabled>
-    <option>Loading Sellers...</option>
-</select>
-<p class="dropdown-info" id="sellerInfo">Sellers list will be available offline after first sync</p>
-
-<input type="text" id="notes" placeholder="Notes (optional)">
-
-<button id="submitBtn" onclick="submitPurchase()">Submit Purchase</button>
-<button id="previewBtn" class="secondary" onclick="openPreview()">📋 Preview Offline Purchases</button>
-<button id="syncBtn" class="tertiary" onclick="syncPending()">🔄 Sync Now & Update Names</button>
-<button id="historyBtn" class="secondary" onclick="openPurchaseHistory()">📊 Open Purchase History Site</button>
-
-<p id="status"></p>
-</div>
-
-<div id="previewModal">
-<div id="previewContent">
-<h3>📋 Offline Purchases <span id="pendingCount" class="offline-badge">0</span></h3>
-<div style="max-height:400px; overflow-y:auto;">
-<table>
-<thead>
-<tr>
-<th>Date</th>
-<th>Item</th>
-<th>Qty</th>
-<th>Unit</th>
-<th>Price</th>
-<th>Buyer</th>
-<th>Seller</th>
-<th>Total</th>
-<th>Notes</th>
-</tr>
-</thead>
-<tbody id="previewTableBody"></tbody>
-</table>
-</div>
-<div style="display:flex; gap:10px; margin-top:15px;">
-<button id="confirmSyncBtn" onclick="syncPending()" style="flex:2;">🔄 Sync All Purchases</button>
-<button id="closePreview" onclick="closePreview()" style="flex:1;">Close</button>
-</div>
-</div>
-</div>
-
-<script>
-const DEPLOY_URL = "https://script.google.com/macros/s/AKfycbyv09AR2ocXVq0Bb45r0krfBEHMx6ueq1LoBGp0sCs3kDgJcFPtuvdlU_ZF8G2dbBFu-Q/exec";
-const HISTORY_SITE_URL = "https://sites.google.com/view/megeho/purchases/purchase-history";
-
-// DOM Elements
-const unitDropdown = document.getElementById("unit");
-const unitOtherInput = document.getElementById("unitOther");
-const boughtByDropdown = document.getElementById("boughtBy");
-const sellerNameDropdown = document.getElementById("sellerName");
-const statusEl = document.getElementById("status");
-const quantityInput = document.getElementById("quantity");
-const priceInput = document.getElementById("price");
-const totalDisplay = document.getElementById("totalDisplay");
-const onlineStatusEl = document.getElementById("onlineStatus");
-const pendingCountEl = document.getElementById("pendingCount");
-const buyerInfoEl = document.getElementById("buyerInfo");
-const sellerInfoEl = document.getElementById("sellerInfo");
-
-// Database
-let db;
-const DB_NAME = "CreditsBookDB";
-const STORE_PURCHASE = "offlinePurchases";
-const STORE_NAMES = "dropdownNames";
-
-// Initialize Database
-function initDB() {
-    const req = indexedDB.open(DB_NAME, 3); // Version 3 for names storage
-    
-    req.onupgradeneeded = e => {
-        db = e.target.result;
-        console.log("Upgrading DB to version:", e.oldVersion, "→", e.newVersion);
-        
-        // Create purchases store with auto-increment ID
-        if (!db.objectStoreNames.contains(STORE_PURCHASE)) {
-            const purchaseStore = db.createObjectStore(STORE_PURCHASE, { autoIncrement: true });
-            purchaseStore.createIndex("timestamp", "timestamp", { unique: false });
-        }
-        
-        // Create names store for dropdown data
-        if (!db.objectStoreNames.contains(STORE_NAMES)) {
-            const namesStore = db.createObjectStore(STORE_NAMES, { keyPath: "type" });
-            console.log("Created names store");
-        }
-    };
-    
-    req.onsuccess = e => { 
-        db = e.target.result; 
-        console.log("DB initialized successfully");
-        loadDropdowns();
-        updateOnlineStatus();
-        updatePendingCount();
-    };
-    
-    req.onerror = e => { 
-        console.error("DB Error", e);
-        showStatus("Error initializing database", "red");
-    };
-}
-
-// Online/Offline Status
-function updateOnlineStatus() {
-    const online = navigator.onLine;
-    onlineStatusEl.textContent = online ? "Online" : "Offline";
-    onlineStatusEl.style.background = online ? "#4CAF50" : "#FF9800";
-}
-
-function updatePendingCount() {
-    if (!db) return;
-    
-    const tx = db.transaction(STORE_PURCHASE, "readonly");
-    const store = tx.objectStore(STORE_PURCHASE);
-    const req = store.getAll();
-    
-    req.onsuccess = e => {
-        const count = e.target.result.length;
-        pendingCountEl.textContent = count;
-        document.getElementById('syncBtn').disabled = count === 0 && navigator.onLine;
-    };
-}
-
-// Status Display
-function showStatus(msg, color = "#2196F3") {
-    statusEl.textContent = msg;
-    statusEl.style.backgroundColor = color === 'green' ? '#E8F5E9' : (color === 'red' ? '#FFEBEE' : '#E3F2FD');
-    statusEl.style.color = color === 'green' ? '#388E3C' : (color === 'red' ? '#D32F2F' : '#1565C0');
-    statusEl.style.opacity = 1;
-    setTimeout(() => { statusEl.style.opacity = 0; }, 4000);
-}
-
-// Event Listeners
-unitDropdown.addEventListener("change", () => {
-    unitOtherInput.style.display = unitDropdown.value === "other" ? "block" : "none";
-    if (unitDropdown.value !== "other") unitOtherInput.value = "";
+// Install event - cache essential files
+self.addEventListener('install', event => {
+  console.log('🛠 Service Worker installing on Netlify...');
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => {
+        console.log('📦 Opened cache and adding files:', urlsToCache);
+        return cache.addAll(urlsToCache)
+          .then(() => {
+            console.log('✅ All files cached successfully');
+          })
+          .catch(error => {
+            console.log('❌ Cache addAll failed:', error);
+          });
+      })
+  );
+  // Force the waiting service worker to become active
+  self.skipWaiting();
 });
 
-[quantityInput, priceInput].forEach(input => {
-    input.addEventListener("input", () => {
-        const total = (parseFloat(quantityInput.value) || 0) * (parseFloat(priceInput.value) || 0);
-        totalDisplay.textContent = total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    });
+// Activate event - clean up old caches
+self.addEventListener('activate', event => {
+  console.log('🎯 Service Worker activating...');
+  event.waitUntil(
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames.map(cacheName => {
+          if (cacheName !== CACHE_NAME) {
+            console.log('🗑 Deleting old cache:', cacheName);
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    })
+  );
+  // Take control immediately
+  self.clients.claim();
 });
 
-// Dropdown Management - FIXED OFFLINE STORAGE
-async function fetchNames(type) {
-    console.log(`Fetching ${type} names, online:`, navigator.onLine);
-    
-    // Always try to get local names first for immediate response
-    const localNames = await getLocalNames(type);
-    
-    if (!navigator.onLine) {
-        console.log(`Offline - using local ${type} names:`, localNames);
-        return localNames;
-    }
-    
-    try {
-        console.log(`Fetching ${type} names from server...`);
-        const res = await fetch(DEPLOY_URL, {
-            method: "POST",
-            body: new URLSearchParams({ action: "getNames", type: type })
-        });
-        
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
-        const result = await res.json();
-        console.log(`Server response for ${type}:`, result);
-        
-        if (result.status === "success") {
-            const serverNames = result.data.map(r => r[2]).filter(name => name && name.trim() !== '');
-            console.log(`Saving ${serverNames.length} ${type} names locally`);
-            await saveLocalNames(type, serverNames);
-            return serverNames;
-        } else {
-            throw new Error(result.message || "Fetch failed");
-        }
-    } catch (error) {
-        console.warn(`Error fetching ${type} names:`, error, "Using local names:", localNames);
-        return localNames;
-    }
-}
+// Fetch event - serve from cache first, then network
+self.addEventListener('fetch', event => {
+  // Skip non-GET requests
+  if (event.request.method !== 'GET') {
+    return;
+  }
 
-function saveLocalNames(type, names) {
-    return new Promise((resolve, reject) => {
-        if (!db) {
-            console.warn("DB not ready for saving names");
-            resolve();
-            return;
-        }
-        
-        const tx = db.transaction(STORE_NAMES, "readwrite");
-        const store = tx.objectStore(STORE_NAMES);
-        
-        console.log(`Saving ${names.length} ${type} names to local DB:`, names);
-        
-        store.put({ 
-            type: type, 
-            names: names, 
-            lastUpdated: new Date().toISOString(),
-            count: names.length 
-        });
-        
-        tx.oncomplete = () => {
-            console.log(`Successfully saved ${names.length} ${type} names`);
-            resolve();
-        };
-        
-        tx.onerror = (e) => {
-            console.error(`Error saving ${type} names:`, e);
-            reject(e);
-        };
-    });
-}
+  // Skip Chrome extensions
+  if (event.request.url.startsWith('chrome-extension://')) {
+    return;
+  }
 
-function getLocalNames(type) {
-    return new Promise(resolve => {
-        if (!db) {
-            console.warn("DB not ready for reading names");
-            resolve([]);
-            return;
+  // Skip external URLs (Google Apps Script, etc.)
+  if (!event.request.url.startsWith(self.location.origin)) {
+    return;
+  }
+
+  event.respondWith(
+    caches.match(event.request)
+      .then(response => {
+        // Return cached version if found
+        if (response) {
+          console.log('📂 Serving from cache:', event.request.url);
+          return response;
         }
-        
-        const tx = db.transaction(STORE_NAMES, "readonly");
-        const store = tx.objectStore(STORE_NAMES);
-        const req = store.get(type);
-        
-        req.onsuccess = () => {
-            if (req.result && req.result.names) {
-                console.log(`Found ${req.result.names.length} local ${type} names:`, req.result.names);
-                resolve(req.result.names);
-            } else {
-                console.log(`No local ${type} names found`);
-                resolve([]);
+
+        // Otherwise fetch from network
+        console.log('🌐 Fetching from network:', event.request.url);
+        return fetch(event.request)
+          .then(response => {
+            // Check if we received a valid response
+            if (!response || response.status !== 200 || response.type !== 'basic') {
+              return response;
             }
-        };
-        
-        req.onerror = () => {
-            console.warn(`Error reading local ${type} names`);
-            resolve([]);
-        };
-    });
-}
 
-async function populateDropdown(dropdown, type, infoEl) {
-    try {
-        const names = await fetchNames(type);
-        dropdown.innerHTML = "";
-        
-        if (names.length === 0) {
-            const opt = document.createElement("option");
-            opt.textContent = `No ${type}s available` + (navigator.onLine ? " - sync to update" : " (offline)");
-            opt.disabled = true;
-            opt.selected = true;
-            dropdown.appendChild(opt);
-            dropdown.disabled = true;
-            
-            if (infoEl) {
-                infoEl.textContent = `No ${type.toLowerCase()}s available. ${navigator.onLine ? 'Sync to download names.' : 'Go online and sync to get names.'}`;
-                infoEl.style.color = '#f44336';
-            }
-            return;
-        }
-        
-        const defaultOpt = document.createElement("option");
-        defaultOpt.textContent = `Select ${type}`;
-        defaultOpt.disabled = true;
-        defaultOpt.selected = true;
-        dropdown.appendChild(defaultOpt);
-        
-        names.forEach(name => {
-            if (name && name.trim() !== '') {
-                const opt = document.createElement("option");
-                opt.value = name;
-                opt.textContent = name;
-                dropdown.appendChild(opt);
-            }
-        });
-        
-        dropdown.disabled = false;
-        
-        if (infoEl) {
-            const source = navigator.onLine ? 'server' : 'offline storage';
-            infoEl.textContent = `${names.length} ${type.toLowerCase()}s loaded from ${source}`;
-            infoEl.style.color = '#4CAF50';
-        }
-        
-        console.log(`Populated ${type} dropdown with ${names.length} items`);
-    } catch (error) {
-        console.error(`Error populating ${type} dropdown:`, error);
-        if (infoEl) {
-            infoEl.textContent = `Error loading ${type.toLowerCase()}s`;
-            infoEl.style.color = '#f44336';
-        }
-    }
-}
+            // Clone the response
+            const responseToCache = response.clone();
 
-async function loadDropdowns() {
-    console.log("Loading dropdowns...");
-    await populateDropdown(boughtByDropdown, "Buyer", buyerInfoEl);
-    await populateDropdown(sellerNameDropdown, "Seller", sellerInfoEl);
-}
+            // Add to cache for future visits
+            caches.open(CACHE_NAME)
+              .then(cache => {
+                cache.put(event.request, responseToCache);
+                console.log('💾 Cached new resource:', event.request.url);
+              });
 
-// Refresh names from server
-async function refreshNames() {
-    if (!navigator.onLine) {
-        showStatus("⚠️ No internet connection to refresh names", "red");
-        return;
-    }
-    
-    showStatus("🔄 Refreshing names from server...");
-    
-    try {
-        // Force fetch from server by not using cache
-        const [buyers, sellers] = await Promise.all([
-            fetchNames("Buyer"),
-            fetchNames("Seller")
-        ]);
-        
-        // Re-populate dropdowns with fresh data
-        await populateDropdown(boughtByDropdown, "Buyer", buyerInfoEl);
-        await populateDropdown(sellerNameDropdown, "Seller", sellerInfoEl);
-        
-        showStatus(`✅ Updated ${buyers.length} buyers, ${sellers.length} sellers`, "green");
-    } catch (error) {
-        console.error("Error refreshing names:", error);
-        showStatus("❌ Failed to refresh names", "red");
-    }
-}
+            return response;
+          })
+          .catch(error => {
+            console.log('❌ Fetch failed:', error);
+            // You could return a custom offline page here
+            throw error;
+          });
+      })
+  );
+});
 
-// Purchase Management
-function submitPurchase() {
-    const groceryName = document.getElementById("groceryName").value.trim();
-    const quantity = document.getElementById("quantity").value;
-    let unit = unitDropdown.value === "other" ? unitOtherInput.value.trim() : unitDropdown.value;
-    const price = document.getElementById("price").value;
-    const boughtBy = boughtByDropdown.value;
-    const sellerName = sellerNameDropdown.value;
-    const notes = document.getElementById("notes").value.trim();
-    
-    // Validation
-    if (!groceryName || !quantity || !unit || !price || 
-        boughtByDropdown.disabled || sellerNameDropdown.disabled || 
-        boughtBy === "Select Buyer" || sellerName === "Select Seller") {
-        showStatus("⚠️ Fill all required fields", "red");
-        return;
-    }
-    
-    const purchase = {
-        groceryName,
-        quantity,
-        unit,
-        price,
-        boughtBy,
-        sellerName,
-        notes,
-        timestamp: new Date().toISOString()
-    };
-    
-    if (navigator.onLine) {
-        // Try to submit online first
-        submitOnline(purchase);
-    } else {
-        // Save offline
-        saveOffline(purchase);
-    }
-}
-
-function submitOnline(purchase) {
-    showStatus("🔄 Submitting purchase online...");
-    
-    fetch(DEPLOY_URL, {
-        method: "POST",
-        body: new URLSearchParams({ action: "addPurchase", ...purchase })
-    })
-    .then(res => res.json())
-    .then(result => {
-        if (result.status === "success") {
-            showStatus("✅ Purchase submitted online", "green");
-            resetForm();
-        } else {
-            throw new Error(result.message || "Submission failed");
-        }
-    })
-    .catch((error) => {
-        console.error("Online submission failed, saving offline:", error);
-        // Fallback to offline storage
-        saveOffline(purchase);
-    });
-}
-
-function saveOffline(purchase) {
-    const tx = db.transaction(STORE_PURCHASE, "readwrite");
-    const store = tx.objectStore(STORE_PURCHASE);
-    store.add(purchase);
-    
-    tx.oncomplete = () => {
-        showStatus("💾 Purchase saved offline", "green");
-        resetForm();
-        updatePendingCount();
-    };
-    
-    tx.onerror = () => {
-        showStatus("❌ Error saving purchase", "red");
-    };
-}
-
-function resetForm() {
-    document.getElementById("groceryName").value = "";
-    document.getElementById("quantity").value = "";
-    unitDropdown.selectedIndex = 0;
-    unitOtherInput.value = "";
-    unitOtherInput.style.display = "none";
-    document.getElementById("price").value = "";
-    totalDisplay.textContent = "0.00";
-    document.getElementById("notes").value = "";
-    boughtByDropdown.selectedIndex = 0;
-    sellerNameDropdown.selectedIndex = 0;
-}
-
-// Preview Modal
-function openPreview() {
-    const tx = db.transaction(STORE_PURCHASE, "readonly");
-    const store = tx.objectStore(STORE_PURCHASE);
-    const req = store.getAll();
-    
-    req.onsuccess = e => {
-        const data = e.target.result;
-        const tbody = document.getElementById("previewTableBody");
-        tbody.innerHTML = "";
-        
-        if (data.length === 0) {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `<td colspan="9" style="text-align:center; padding:20px;">No pending purchases</td>`;
-            tbody.appendChild(tr);
-        } else {
-            data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-            
-            data.forEach(p => {
-                const tr = document.createElement("tr");
-                const total = (parseFloat(p.quantity) || 0) * (parseFloat(p.price) || 0);
-                const date = new Date(p.timestamp).toLocaleDateString();
-                
-                tr.innerHTML = `
-                    <td>${date}</td>
-                    <td>${p.groceryName}</td>
-                    <td>${p.quantity}</td>
-                    <td>${p.unit}</td>
-                    <td>${parseFloat(p.price).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}</td>
-                    <td>${p.boughtBy}</td>
-                    <td>${p.sellerName}</td>
-                    <td>${total.toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}</td>
-                    <td>${p.notes || '-'}</td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-        
-        document.getElementById("previewModal").style.display = "flex";
-    };
-}
-
-function closePreview() {
-    document.getElementById("previewModal").style.display = "none";
-}
-
-// Sync Functionality - UPDATED TO ALSO REFRESH NAMES
-async function syncPending() {
-    if (!navigator.onLine) {
-        showStatus("⚠️ No internet connection", "red");
-        return;
-    }
-    
-    showStatus("🔄 Syncing purchases and updating names...");
-    
-    try {
-        // First refresh the names
-        await refreshNames();
-        
-        // Then sync pending purchases
-        const tx = db.transaction(STORE_PURCHASE, "readonly");
-        const store = tx.objectStore(STORE_PURCHASE);
-        const req = store.getAll();
-        
-        req.onsuccess = async e => {
-            const pending = e.target.result;
-            
-            if (pending.length === 0) {
-                showStatus("✅ Names updated - no pending purchases to sync", "green");
-                return;
-            }
-            
-            showStatus(`🔄 Syncing ${pending.length} purchases...`);
-            
-            let successCount = 0;
-            let failCount = 0;
-            
-            for (const p of pending) {
-                try {
-                    const res = await fetch(DEPLOY_URL, {
-                        method: "POST",
-                        body: new URLSearchParams({ action: "addPurchase", ...p })
-                    });
-                    const result = await res.json();
-                    
-                    if (result.status === "success") {
-                        successCount++;
-                    } else {
-                        throw new Error(result.message || "Sync failed");
-                    }
-                } catch (err) {
-                    console.error("Sync error:", err);
-                    failCount++;
-                }
-            }
-            
-            if (failCount === 0) {
-                // Clear all pending purchases on successful sync
-                const clearTx = db.transaction(STORE_PURCHASE, "readwrite");
-                clearTx.objectStore(STORE_PURCHASE).clear();
-                clearTx.oncomplete = () => {
-                    showStatus(`✅ All ${successCount} purchases synced and names updated!`, "green");
-                    updatePendingCount();
-                    closePreview();
-                };
-            } else {
-                showStatus(`⚠️ ${successCount} synced, ${failCount} failed - names updated`, "red");
-            }
-        };
-    } catch (error) {
-        console.error("Sync process error:", error);
-        showStatus("❌ Sync failed", "red");
-    }
-}
-
-// External Link
-function openPurchaseHistory() {
-    window.open(HISTORY_SITE_URL, '_blank');
-}
-
-// Initialize App
-window.addEventListener('online', updateOnlineStatus);
-window.addEventListener('offline', updateOnlineStatus);
-window.onload = () => { initDB(); };
-
-// Add this to debug the names storage
-window.debugNames = async function() {
-    console.log("=== DEBUG NAMES STORAGE ===");
-    const buyers = await getLocalNames("Buyer");
-    const sellers = await getLocalNames("Seller");
-    console.log("Local Buyers:", buyers);
-    console.log("Local Sellers:", sellers);
-    console.log("========================");
-};
-</script>
-</body>
-</html>
+// Handle messages from the client
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
