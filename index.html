@@ -1,10 +1,10 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CreditsBook - Offline Ready PWA</title>
-<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="/manifest.json">
 <style>
 body { font-family: 'Inter', Arial, sans-serif; margin:0; padding:0; background:#f0f2f5; }
 .container { max-width:600px; margin:40px auto; padding:25px; border-radius:16px; box-shadow:0 6px 20px rgba(0,0,0,0.1); background:white; border:1px solid #e0e0e0; }
@@ -29,6 +29,7 @@ button.tertiary:hover:not(:disabled) { background:#F57C00; box-shadow:0 6px 15px
 #previewContent th { background:#f0f0f0; position:sticky; top:0; }
 #closePreview { margin-top:10px; background:#f44336; }
 .offline-badge { background:#ff9800; color:white; padding:4px 8px; border-radius:4px; font-size:12px; margin-left:10px; }
+.dropdown-info { font-size:12px; color:#666; margin-top:-10px; margin-bottom:15px; }
 @media (max-width:650px) { .container { margin:10px; padding:15px; } .input-group { flex-direction:column; gap:0; } .input-group > * { margin-bottom:15px; } #previewContent { width:95%; padding:10px; } }
 </style>
 </head>
@@ -59,14 +60,21 @@ button.tertiary:hover:not(:disabled) { background:#F57C00; box-shadow:0 6px 15px
 Total: <span id="totalDisplay">0.00</span> FRW
 </p>
 
-<select id="boughtBy" required disabled><option>Loading Buyers...</option></select>
-<select id="sellerName" required disabled><option>Loading Sellers...</option></select>
+<select id="boughtBy" required disabled>
+    <option>Loading Buyers...</option>
+</select>
+<p class="dropdown-info" id="buyerInfo">Buyers list will be available offline after first sync</p>
+
+<select id="sellerName" required disabled>
+    <option>Loading Sellers...</option>
+</select>
+<p class="dropdown-info" id="sellerInfo">Sellers list will be available offline after first sync</p>
 
 <input type="text" id="notes" placeholder="Notes (optional)">
 
 <button id="submitBtn" onclick="submitPurchase()">Submit Purchase</button>
 <button id="previewBtn" class="secondary" onclick="openPreview()">📋 Preview Offline Purchases</button>
-<button id="syncBtn" class="tertiary" onclick="syncPending()">🔄 Sync Now</button>
+<button id="syncBtn" class="tertiary" onclick="syncPending()">🔄 Sync Now & Update Names</button>
 <button id="historyBtn" class="secondary" onclick="openPurchaseHistory()">📊 Open Purchase History Site</button>
 
 <p id="status"></p>
@@ -115,6 +123,8 @@ const priceInput = document.getElementById("price");
 const totalDisplay = document.getElementById("totalDisplay");
 const onlineStatusEl = document.getElementById("onlineStatus");
 const pendingCountEl = document.getElementById("pendingCount");
+const buyerInfoEl = document.getElementById("buyerInfo");
+const sellerInfoEl = document.getElementById("sellerInfo");
 
 // Database
 let db;
@@ -122,20 +132,53 @@ const DB_NAME = "CreditsBookDB";
 const STORE_PURCHASE = "offlinePurchases";
 const STORE_NAMES = "dropdownNames";
 
+// Netlify PWA Service Worker Registration
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/sw.js')
+      .then(function(registration) {
+        console.log('SW Registered successfully on Netlify with scope: ', registration.scope);
+        
+        if (navigator.serviceWorker.controller) {
+          console.log('Service Worker is controlling the page');
+          showStatus('✅ App is ready for offline use', 'green');
+        } else {
+          console.log('Service Worker registered but not controlling yet');
+        }
+      })
+      .catch(function(error) {
+        console.log('SW Registration failed on Netlify: ', error);
+        showStatus('⚠️ Offline features not available', 'red');
+      });
+  });
+
+  // Listen for controller changes
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!refreshing) {
+      refreshing = true;
+      console.log('Controller changed - reloading page');
+      showStatus('🔄 App updated - reloading...', 'green');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    }
+  });
+}
+
 // Initialize Database
 function initDB() {
-    const req = indexedDB.open(DB_NAME, 2); // Version 2 for potential future upgrades
+    const req = indexedDB.open(DB_NAME, 3);
     
     req.onupgradeneeded = e => {
         db = e.target.result;
+        console.log("Upgrading DB to version:", e.oldVersion, "→", e.newVersion);
         
-        // Create purchases store with auto-increment ID
         if (!db.objectStoreNames.contains(STORE_PURCHASE)) {
             const purchaseStore = db.createObjectStore(STORE_PURCHASE, { autoIncrement: true });
             purchaseStore.createIndex("timestamp", "timestamp", { unique: false });
         }
         
-        // Create names store for dropdown data
         if (!db.objectStoreNames.contains(STORE_NAMES)) {
             db.createObjectStore(STORE_NAMES, { keyPath: "type" });
         }
@@ -143,9 +186,11 @@ function initDB() {
     
     req.onsuccess = e => { 
         db = e.target.result; 
+        console.log("DB initialized successfully");
         loadDropdowns();
         updateOnlineStatus();
         updatePendingCount();
+        checkServiceWorkerStatus();
     };
     
     req.onerror = e => { 
@@ -154,19 +199,27 @@ function initDB() {
     };
 }
 
+// Check Service Worker Status
+function checkServiceWorkerStatus() {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        console.log('✅ Page is controlled by Service Worker');
+        showStatus('✅ Offline mode ready!', 'green');
+    } else {
+        console.log('❌ Page NOT controlled by Service Worker');
+        showStatus('⚠️ Reload page for offline features', 'orange');
+    }
+}
+
 // Online/Offline Status
 function updateOnlineStatus() {
     const online = navigator.onLine;
     onlineStatusEl.textContent = online ? "Online" : "Offline";
     onlineStatusEl.style.background = online ? "#4CAF50" : "#FF9800";
-    
-    if (online) {
-        // Refresh dropdowns when coming online
-        loadDropdowns();
-    }
 }
 
 function updatePendingCount() {
+    if (!db) return;
+    
     const tx = db.transaction(STORE_PURCHASE, "readonly");
     const store = tx.objectStore(STORE_PURCHASE);
     const req = store.getAll();
@@ -174,7 +227,7 @@ function updatePendingCount() {
     req.onsuccess = e => {
         const count = e.target.result.length;
         pendingCountEl.textContent = count;
-        document.getElementById('syncBtn').disabled = count === 0;
+        document.getElementById('syncBtn').disabled = count === 0 && !navigator.onLine;
     };
 }
 
@@ -202,81 +255,184 @@ unitDropdown.addEventListener("change", () => {
 
 // Dropdown Management
 async function fetchNames(type) {
+    console.log(`Fetching ${type} names, online:`, navigator.onLine);
+    
+    const localNames = await getLocalNames(type);
+    
     if (!navigator.onLine) {
-        return await getLocalNames(type);
+        console.log(`Offline - using local ${type} names:`, localNames);
+        return localNames;
     }
     
     try {
+        console.log(`Fetching ${type} names from server...`);
         const res = await fetch(DEPLOY_URL, {
             method: "POST",
             body: new URLSearchParams({ action: "getNames", type: type })
         });
+        
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
         const result = await res.json();
+        console.log(`Server response for ${type}:`, result);
         
         if (result.status === "success") {
-            await saveLocalNames(type, result.data.map(r => r[2]));
-            return result.data.map(r => r[2]);
+            const serverNames = result.data.map(r => r[2]).filter(name => name && name.trim() !== '');
+            console.log(`Saving ${serverNames.length} ${type} names locally`);
+            await saveLocalNames(type, serverNames);
+            return serverNames;
         } else {
             throw new Error(result.message || "Fetch failed");
         }
-    } catch (e) {
-        console.warn("Error fetching " + type + "s:", e);
-        return await getLocalNames(type);
+    } catch (error) {
+        console.warn(`Error fetching ${type} names:`, error, "Using local names:", localNames);
+        return localNames;
     }
 }
 
 function saveLocalNames(type, names) {
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            console.warn("DB not ready for saving names");
+            resolve();
+            return;
+        }
+        
         const tx = db.transaction(STORE_NAMES, "readwrite");
         const store = tx.objectStore(STORE_NAMES);
-        store.put({ type, names, lastUpdated: Date.now() });
-        tx.oncomplete = () => resolve();
+        
+        console.log(`Saving ${names.length} ${type} names to local DB:`, names);
+        
+        store.put({ 
+            type: type, 
+            names: names, 
+            lastUpdated: new Date().toISOString(),
+            count: names.length 
+        });
+        
+        tx.oncomplete = () => {
+            console.log(`Successfully saved ${names.length} ${type} names`);
+            resolve();
+        };
+        
+        tx.onerror = (e) => {
+            console.error(`Error saving ${type} names:`, e);
+            reject(e);
+        };
     });
 }
 
 function getLocalNames(type) {
     return new Promise(resolve => {
+        if (!db) {
+            console.warn("DB not ready for reading names");
+            resolve([]);
+            return;
+        }
+        
         const tx = db.transaction(STORE_NAMES, "readonly");
         const store = tx.objectStore(STORE_NAMES);
         const req = store.get(type);
-        req.onsuccess = e => resolve(req.result ? req.result.names : []);
-        req.onerror = e => resolve([]);
+        
+        req.onsuccess = () => {
+            if (req.result && req.result.names) {
+                console.log(`Found ${req.result.names.length} local ${type} names:`, req.result.names);
+                resolve(req.result.names);
+            } else {
+                console.log(`No local ${type} names found`);
+                resolve([]);
+            }
+        };
+        
+        req.onerror = () => {
+            console.warn(`Error reading local ${type} names`);
+            resolve([]);
+        };
     });
 }
 
-async function populateDropdown(dropdown, type) {
-    const names = await fetchNames(type);
-    dropdown.innerHTML = "";
-    
-    if (names.length === 0) {
-        const opt = document.createElement("option");
-        opt.textContent = "No " + type + "s available" + (navigator.onLine ? "" : " (offline)");
-        opt.disabled = true;
-        opt.selected = true;
-        dropdown.appendChild(opt);
-        dropdown.disabled = true;
-        return;
+async function populateDropdown(dropdown, type, infoEl) {
+    try {
+        const names = await fetchNames(type);
+        dropdown.innerHTML = "";
+        
+        if (names.length === 0) {
+            const opt = document.createElement("option");
+            opt.textContent = `No ${type}s available` + (navigator.onLine ? " - sync to update" : " (offline)");
+            opt.disabled = true;
+            opt.selected = true;
+            dropdown.appendChild(opt);
+            dropdown.disabled = true;
+            
+            if (infoEl) {
+                infoEl.textContent = `No ${type.toLowerCase()}s available. ${navigator.onLine ? 'Sync to download names.' : 'Go online and sync to get names.'}`;
+                infoEl.style.color = '#f44336';
+            }
+            return;
+        }
+        
+        const defaultOpt = document.createElement("option");
+        defaultOpt.textContent = `Select ${type}`;
+        defaultOpt.disabled = true;
+        defaultOpt.selected = true;
+        dropdown.appendChild(defaultOpt);
+        
+        names.forEach(name => {
+            if (name && name.trim() !== '') {
+                const opt = document.createElement("option");
+                opt.value = name;
+                opt.textContent = name;
+                dropdown.appendChild(opt);
+            }
+        });
+        
+        dropdown.disabled = false;
+        
+        if (infoEl) {
+            const source = navigator.onLine ? 'server' : 'offline storage';
+            infoEl.textContent = `${names.length} ${type.toLowerCase()}s loaded from ${source}`;
+            infoEl.style.color = '#4CAF50';
+        }
+        
+        console.log(`Populated ${type} dropdown with ${names.length} items`);
+    } catch (error) {
+        console.error(`Error populating ${type} dropdown:`, error);
+        if (infoEl) {
+            infoEl.textContent = `Error loading ${type.toLowerCase()}s`;
+            infoEl.style.color = '#f44336';
+        }
     }
-    
-    const defaultOpt = document.createElement("option");
-    defaultOpt.textContent = "Select " + type;
-    defaultOpt.disabled = true;
-    defaultOpt.selected = true;
-    dropdown.appendChild(defaultOpt);
-    
-    names.forEach(name => {
-        const opt = document.createElement("option");
-        opt.value = name;
-        opt.textContent = name;
-        dropdown.appendChild(opt);
-    });
-    
-    dropdown.disabled = false;
 }
 
 async function loadDropdowns() {
-    await populateDropdown(boughtByDropdown, "Buyer");
-    await populateDropdown(sellerNameDropdown, "Seller");
+    console.log("Loading dropdowns...");
+    await populateDropdown(boughtByDropdown, "Buyer", buyerInfoEl);
+    await populateDropdown(sellerNameDropdown, "Seller", sellerInfoEl);
+}
+
+// Refresh names from server
+async function refreshNames() {
+    if (!navigator.onLine) {
+        showStatus("⚠️ No internet connection to refresh names", "red");
+        return;
+    }
+    
+    showStatus("🔄 Refreshing names from server...");
+    
+    try {
+        const [buyers, sellers] = await Promise.all([
+            fetchNames("Buyer"),
+            fetchNames("Seller")
+        ]);
+        
+        await populateDropdown(boughtByDropdown, "Buyer", buyerInfoEl);
+        await populateDropdown(sellerNameDropdown, "Seller", sellerInfoEl);
+        
+        showStatus(`✅ Updated ${buyers.length} buyers, ${sellers.length} sellers`, "green");
+    } catch (error) {
+        console.error("Error refreshing names:", error);
+        showStatus("❌ Failed to refresh names", "red");
+    }
 }
 
 // Purchase Management
@@ -309,15 +465,15 @@ function submitPurchase() {
     };
     
     if (navigator.onLine) {
-        // Try to submit online first
         submitOnline(purchase);
     } else {
-        // Save offline
         saveOffline(purchase);
     }
 }
 
 function submitOnline(purchase) {
+    showStatus("🔄 Submitting purchase online...");
+    
     fetch(DEPLOY_URL, {
         method: "POST",
         body: new URLSearchParams({ action: "addPurchase", ...purchase })
@@ -331,8 +487,8 @@ function submitOnline(purchase) {
             throw new Error(result.message || "Submission failed");
         }
     })
-    .catch(() => {
-        // Fallback to offline storage
+    .catch((error) => {
+        console.error("Online submission failed, saving offline:", error);
         saveOffline(purchase);
     });
 }
@@ -419,56 +575,63 @@ async function syncPending() {
         return;
     }
     
-    const tx = db.transaction(STORE_PURCHASE, "readonly");
-    const store = tx.objectStore(STORE_PURCHASE);
-    const req = store.getAll();
+    showStatus("🔄 Syncing purchases and updating names...");
     
-    req.onsuccess = async e => {
-        const pending = e.target.result;
+    try {
+        await refreshNames();
         
-        if (pending.length === 0) {
-            showStatus("No pending purchases to sync", "green");
-            closePreview();
-            return;
-        }
+        const tx = db.transaction(STORE_PURCHASE, "readonly");
+        const store = tx.objectStore(STORE_PURCHASE);
+        const req = store.getAll();
         
-        showStatus(`🔄 Syncing ${pending.length} purchases...`);
-        
-        let successCount = 0;
-        let failCount = 0;
-        
-        for (const p of pending) {
-            try {
-                const res = await fetch(DEPLOY_URL, {
-                    method: "POST",
-                    body: new URLSearchParams({ action: "addPurchase", ...p })
-                });
-                const result = await res.json();
-                
-                if (result.status === "success") {
-                    successCount++;
-                } else {
-                    throw new Error(result.message || "Sync failed");
-                }
-            } catch (err) {
-                console.error("Sync error:", err);
-                failCount++;
+        req.onsuccess = async e => {
+            const pending = e.target.result;
+            
+            if (pending.length === 0) {
+                showStatus("✅ Names updated - no pending purchases to sync", "green");
+                return;
             }
-        }
-        
-        if (failCount === 0) {
-            // Clear all pending purchases on successful sync
-            const clearTx = db.transaction(STORE_PURCHASE, "readwrite");
-            clearTx.objectStore(STORE_PURCHASE).clear();
-            clearTx.oncomplete = () => {
-                showStatus(`✅ All ${successCount} purchases synced successfully!`, "green");
-                updatePendingCount();
-                closePreview();
-            };
-        } else {
-            showStatus(`⚠️ ${successCount} synced, ${failCount} failed`, "red");
-        }
-    };
+            
+            showStatus(`🔄 Syncing ${pending.length} purchases...`);
+            
+            let successCount = 0;
+            let failCount = 0;
+            
+            for (const p of pending) {
+                try {
+                    const res = await fetch(DEPLOY_URL, {
+                        method: "POST",
+                        body: new URLSearchParams({ action: "addPurchase", ...p })
+                    });
+                    const result = await res.json();
+                    
+                    if (result.status === "success") {
+                        successCount++;
+                    } else {
+                        throw new Error(result.message || "Sync failed");
+                    }
+                } catch (err) {
+                    console.error("Sync error:", err);
+                    failCount++;
+                }
+            }
+            
+            if (failCount === 0) {
+                const clearTx = db.transaction(STORE_PURCHASE, "readwrite");
+                clearTx.objectStore(STORE_PURCHASE).clear();
+                clearTx.oncomplete = () => {
+                    showStatus(`✅ All ${successCount} purchases synced and names updated!`, "green");
+                    updatePendingCount();
+                    closePreview();
+                };
+            } else {
+                showStatus(`⚠️ ${successCount} synced, ${failCount} failed - names updated`, "red");
+            }
+        };
+    } catch (error) {
+        console.error("Sync process error:", error);
+        showStatus("❌ Sync failed", "red");
+    }
 }
 
 // External Link
@@ -476,23 +639,24 @@ function openPurchaseHistory() {
     window.open(HISTORY_SITE_URL, '_blank');
 }
 
-// PWA Service Worker Registration
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-            .then(registration => {
-                console.log('SW registered: ', registration);
-            })
-            .catch(registrationError => {
-                console.log('SW registration failed: ', registrationError);
-            });
-    });
-}
-
 // Initialize App
 window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
-window.onload = () => { initDB(); };
+window.onload = () => { 
+    console.log('Netlify App Starting...');
+    console.log('Service Worker supported:', 'serviceWorker' in navigator);
+    initDB(); 
+};
+
+// Debug function
+window.debugNames = async function() {
+    console.log("=== DEBUG NAMES STORAGE ===");
+    const buyers = await getLocalNames("Buyer");
+    const sellers = await getLocalNames("Seller");
+    console.log("Local Buyers:", buyers);
+    console.log("Local Sellers:", sellers);
+    console.log("========================");
+};
 </script>
 </body>
 </html>
